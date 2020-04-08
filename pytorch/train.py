@@ -36,6 +36,12 @@ parser.add_argument('--d_inner', type=int, default=1000,
                     help='inner dimension in FF')
 parser.add_argument('--dropout', type=float, default=0.0,
                     help='global dropout rate')
+parser.add_argument('--dropoute', type=float, default=0.1,
+                    help='Discrete input embedding dropout rate.')
+parser.add_argument('--dropouto', type=float, default=0.1,
+                    help='Output dropout rate.')
+parser.add_argument('--dropouti', type=float, default=0.1,
+                    help='Input embedding dropout rate.')
 parser.add_argument('--dropatt', type=float, default=0.0,
                     help='attention probability dropout rate')
 parser.add_argument('--init', default='normal', type=str,
@@ -102,9 +108,9 @@ parser.add_argument('--multi_gpu', action='store_true',
                     help='use multiple GPU')
 parser.add_argument('--log-interval', type=int, default=200,
                     help='report interval')
-parser.add_argument('--eval-interval', type=int, default=4000,
+parser.add_argument('--eval-interval', type=int, default=500,
                     help='evaluation interval')
-parser.add_argument('--work_dir', default='LM-TFM', type=str,
+parser.add_argument('--work-dir', default='LM-TFM', type=str,
                     help='experiment directory.')
 parser.add_argument('--restart', action='store_true',
                     help='restart training from the saved checkpoint')
@@ -141,7 +147,11 @@ parser.add_argument('--static-loss-scale', type=float, default=1,
 parser.add_argument('--dynamic-loss-scale', action='store_true',
                     help='Use dynamic loss scaling.  If supplied, this argument'
                     ' supersedes --static-loss-scale.')
+parser.add_argument('--wdecay', type=float, default=1.2e-6,
+                    help='weight decay applied to all weights')
+
 args = parser.parse_args()
+print(args)
 args.tied = not args.not_tied
 
 if args.d_embed < 0:
@@ -151,9 +161,8 @@ assert args.ext_len >= 0, 'extended context length must be non-negative'
 assert args.batch_size % args.batch_chunk == 0
 
 args.work_dir = '{}-{}'.format(args.work_dir, args.dataset)
-args.work_dir = os.path.join(args.work_dir, time.strftime('%Y%m%d-%H%M%S'))
-logging = create_exp_dir(args.work_dir,
-    scripts_to_save=['train.py', 'mem_transformer.py'], debug=args.debug)
+#args.work_dir = os.path.join(args.work_dir, time.strftime('%Y%m%d-%H%M%S'))
+logging = create_exp_dir(args.work_dir, debug=args.debug)
 
 # Set the random seed manually for reproducibility.
 np.random.seed(args.seed)
@@ -210,8 +219,10 @@ if args.adaptive:
 def init_weight(weight):
     if args.init == 'uniform':
         nn.init.uniform_(weight, -args.init_range, args.init_range)
+        #nn.init.xavier_uniform(weight)#, -args.init_range, args.init_range)
     elif args.init == 'normal':
         nn.init.normal_(weight, 0.0, args.init_std)
+        #nn.init.xavier_normal(weight)#, -args.init_range, args.init_range)
 
 def init_bias(bias):
     nn.init.constant_(bias, 0.0)
@@ -254,6 +265,13 @@ def weights_init(m):
             init_weight(m.r_r_bias)
         if hasattr(m, 'r_bias'):
             init_bias(m.r_bias)
+    # CHANGE 9
+    elif classname.find('RelPartialLearnableDecoderLayer') != -1:
+        for layer in m.pos_ff.CoreNet.modules():
+            if hasattr(layer, 'weight'):
+                init_weight(layer.weight)
+            if hasattr(layer, 'bias'):
+                init_bias(layer.bias)
 
 def update_dropout(m):
     classname = m.__class__.__name__
@@ -264,6 +282,16 @@ def update_dropout(m):
 def update_dropatt(m):
     if hasattr(m, 'dropatt'):
         m.dropatt.p = args.dropatt
+
+def init_all_weights(model):
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear):
+            nn.init.xavier_uniform_(module.weight.data)
+            print(module.weight.shape)
+            if hasattr(module, 'bias'):
+                module.weight.data.zero_()
+        else:
+            print(type(module))
 
 if args.restart:
     with open(os.path.join(args.restart_dir, 'model.pt'), 'rb') as f:
@@ -279,9 +307,11 @@ else:
         tie_projs=tie_projs, pre_lnorm=args.pre_lnorm, tgt_len=args.tgt_len,
         ext_len=args.ext_len, mem_len=args.mem_len, cutoffs=cutoffs,
         same_length=args.same_length, attn_type=args.attn_type,
-        clamp_len=args.clamp_len, sample_softmax=args.sample_softmax)
+        clamp_len=args.clamp_len, sample_softmax=args.sample_softmax,
+        dropoute=args.dropoute, dropouti=args.dropouti, dropouto=args.dropouto)
     model.apply(weights_init)
     model.word_emb.apply(weights_init) # ensure embedding init is not overridden by out_layer in case of weight sharing
+    #init_all_weights(model)
 args.n_all_param = sum([p.nelement() for p in model.parameters()])
 args.n_nonemb_param = sum([p.nelement() for p in model.layers.parameters()])
 
@@ -320,10 +350,12 @@ elif args.optim.lower() == 'adam':
                 sparse_params.append(param)
             else:
                 dense_params.append(param)
-        optimizer_sparse = optim.SparseAdam(sparse_params, lr=args.lr)
-        optimizer = optim.Adam(dense_params, lr=args.lr)
+        # CHANGE 10
+        optimizer_sparse = optim.SparseAdam(sparse_params, lr=args.lr, weight_decay=args.wdecay)
+        optimizer = optim.Adam(dense_params, lr=args.lr, weight_decay=args.wdecay)
     else:
-        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+        # CHANGE 10
+        optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wdecay)
 elif args.optim.lower() == 'adagrad':
     optimizer = optim.Adagrad(model.parameters(), lr=args.lr)
 

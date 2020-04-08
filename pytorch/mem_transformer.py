@@ -12,6 +12,45 @@ sys.path.append('utils')
 from proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
 from log_uniform_sampler import LogUniformSampler, sample_logits
 
+
+class LockedDropout(nn.Module):
+    def __init__(self, dropout=None):
+        super().__init__()
+        self.dropout = dropout
+
+    def forward(self, x):
+        if not self.training or not self.dropout:
+            return x
+        m = x.data.new(1, *x.size()[1:]).bernoulli_(1 - self.dropout)
+        m.required_grad = False
+        mask = m * (1.0/(1 - self.dropout))
+        mask = mask.expand_as(x)
+        return mask * x
+
+def discrete_embedding_dropout(emb_tbl, input_token, dropoute=0.1, scale=None):
+    # discrete input dropout
+    # 1. generate binary mark
+    # 2. mask embedding matrix
+    # 3. perform normal lookup of embeddings (some of which are dropped out)
+    if dropoute:
+        # 1. generate binary mark
+        mask = emb_tbl.weight.data.new(emb_tbl.weight.size(0), 1).bernoulli_(1 - dropoute).bool()
+        # 2. mask embedding matrix
+        masked_embed_weight = mask * emb_tbl.weight * (1.0/(1 - dropoute))
+        # I think this is important so you do not divide by 0 during normalization?
+        masked_embed_weight.masked_fill_(mask.eq(0), 1e-12)
+    else:
+        masked_embed_weight = emb_tbl.weight
+    if scale:
+        masked_embed_weight = scale.expand_as(masked_embed_weight) * masked_embed_weight
+
+    # 3. perform normal lookup of embeddings (some of which are dropped out)
+    X = torch.nn.functional.embedding(input_token, masked_embed_weight,
+            emb_tbl.padding_idx, emb_tbl.max_norm, emb_tbl.norm_type,
+            emb_tbl.scale_grad_by_freq, emb_tbl.sparse)
+    return X
+
+
 class PositionalEmbedding(nn.Module):
     def __init__(self, demb):
         super(PositionalEmbedding, self).__init__()
@@ -41,9 +80,12 @@ class PositionwiseFF(nn.Module):
 
         self.CoreNet = nn.Sequential(
             nn.Linear(d_model, d_inner), nn.ReLU(inplace=True),
-            nn.Dropout(dropout),
+            # Change 7
+            #nn.Dropout(dropout),
+            LockedDropout(dropout),
             nn.Linear(d_inner, d_model),
-            nn.Dropout(dropout),
+            #nn.Dropout(dropout),
+            LockedDropout(dropout),
         )
 
         self.layer_norm = nn.LayerNorm(d_model)
@@ -114,7 +156,7 @@ class MultiHeadAttn(nn.Module):
         attn_score.mul_(self.scale)
         if attn_mask is not None and attn_mask.any().item():
             if attn_mask.dim() == 2:
-                attn_score.masked_fill_(attn_mask[None,:,:,None], -float('inf'))
+                attn_score.masked_fill_(attn_mask[None,:,:,None], -float('inf').bool())
             elif attn_mask.dim() == 3:
                 attn_score.masked_fill_(attn_mask[:,:,:,None], -float('inf'))
 
@@ -150,9 +192,13 @@ class RelMultiHeadAttn(nn.Module):
         self.d_head = d_head
         self.dropout = dropout
 
-        self.qkv_net = nn.Linear(d_model, 3 * n_head * d_head, bias=False)
+        # CHANGE 2
+        #self.qkv_net = nn.Linear(d_model, 3 * n_head * d_head, bias=False)
+        self.qkv_net = nn.Sequential(nn.Linear(d_model, 3 * n_head * d_head, bias=False), LockedDropout(dropout))
 
-        self.drop = nn.Dropout(dropout)
+        # CHANGE 3
+        #self.drop = nn.Dropout(dropout)
+        self.drop = LockedDropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
         self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
 
@@ -342,6 +388,7 @@ class RelLearnableMultiHeadAttn(RelMultiHeadAttn):
 
         # [qlen x klen x bsz x n_head]
         attn_score = AC + BD
+        # CHANGE 8
         attn_score.mul_(self.scale)
 
         #### compute attention probability
@@ -363,6 +410,8 @@ class RelLearnableMultiHeadAttn(RelMultiHeadAttn):
             attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head)
 
         ##### linear projection
+        # CHANGE 8
+        #attn_vec.mul_(self.scale)
         attn_out = self.o_net(attn_vec)
         attn_out = self.drop(attn_out)
 
@@ -432,11 +481,12 @@ class RelPartialLearnableDecoderLayer(nn.Module):
 
 class AdaptiveEmbedding(nn.Module):
     def __init__(self, n_token, d_embed, d_proj, cutoffs, div_val=1, 
-                 sample_softmax=False):
+                 sample_softmax=False, dropoute=0.0):
         super(AdaptiveEmbedding, self).__init__()
 
         self.n_token = n_token
         self.d_embed = d_embed
+        self.dropoute = dropoute
 
         self.cutoffs = cutoffs + [n_token]
         self.div_val = div_val
@@ -463,7 +513,9 @@ class AdaptiveEmbedding(nn.Module):
 
     def forward(self, inp):
         if self.div_val == 1:
-            embed = self.emb_layers[0](inp)
+            # CHANGE 1
+            embed = discrete_embedding_dropout(self.emb_layers[0], inp, dropoute=self.dropoute if self.training else 0)
+            #embed = self.emb_layers[0](inp)
             if self.d_proj != self.d_embed:
                 embed  = F.linear(embed, self.emb_projs[0])
         else:
@@ -481,7 +533,9 @@ class AdaptiveEmbedding(nn.Module):
                     continue
 
                 inp_i = inp_flat.index_select(0, indices_i) - l_idx
-                emb_i = self.emb_layers[i](inp_i)
+                # CHANGE 1
+                emb_i = discrete_embedding_dropout(self.emb_layers[i], inp_i, dropoute=self.dropoute if self.training else 0)
+                #emb_i = self.emb_layers[i](inp_i)
                 emb_i = F.linear(emb_i, self.emb_projs[i])
 
                 emb_flat.index_copy_(0, indices_i, emb_i)
@@ -499,7 +553,7 @@ class MemTransformerLM(nn.Module):
                  tgt_len=None, ext_len=None, mem_len=None, 
                  cutoffs=[], adapt_inp=False,
                  same_length=False, attn_type=0, clamp_len=-1, 
-                 sample_softmax=-1):
+                 sample_softmax=-1, dropoute=0.0, dropouti=0.0, dropouto=0.0):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
 
@@ -509,9 +563,15 @@ class MemTransformerLM(nn.Module):
         self.n_head = n_head
         self.d_head = d_head
 
-        self.word_emb = AdaptiveEmbedding(n_token, d_embed, d_model, cutoffs, 
-                                          div_val=div_val)
 
+        self.dropoute = dropoute
+
+        self.word_emb = AdaptiveEmbedding(n_token, d_embed, d_model, cutoffs, 
+                                          div_val=div_val, dropoute=dropoute)
+
+        # Change 4
+        self.locked_drop_i = LockedDropout(dropouti)
+        self.locked_drop_o = LockedDropout(dropouto)
         self.drop = nn.Dropout(dropout)
 
         self.n_layer = n_layer
@@ -642,6 +702,8 @@ class MemTransformerLM(nn.Module):
     def _forward(self, dec_inp, mems=None):
         qlen, bsz = dec_inp.size()
 
+        # CHANGE 1
+        # discrete embedding dropout is integrated into the adaptive embedding class
         word_emb = self.word_emb(dec_inp)
 
         mlen = mems[0].size(0) if mems is not None else 0
@@ -654,10 +716,10 @@ class MemTransformerLM(nn.Module):
             else:
                 mask_shift_len = qlen
             dec_attn_mask = (torch.triu(all_ones, 1+mlen)
-                    + torch.tril(all_ones, -mask_shift_len)).byte()[:, :, None] # -1
+                    + torch.tril(all_ones, -mask_shift_len)).byte()[:, :, None].bool() # -1
         else:
             dec_attn_mask = torch.triu(
-                word_emb.new_ones(qlen, klen), diagonal=1+mlen).byte()[:,:,None]
+                word_emb.new_ones(qlen, klen), diagonal=1+mlen).byte()[:,:,None].bool()
 
         hids = []
         if self.attn_type == 0: # default
@@ -667,8 +729,9 @@ class MemTransformerLM(nn.Module):
                 pos_seq.clamp_(max=self.clamp_len)
             pos_emb = self.pos_emb(pos_seq)
 
-            core_out = self.drop(word_emb)
-            pos_emb = self.drop(pos_emb)
+            # Change 4
+            core_out = self.locked_drop_i(word_emb)
+            pos_emb = self.locked_drop_i(pos_emb)
 
             hids.append(core_out)
             for i, layer in enumerate(self.layers):
@@ -676,8 +739,10 @@ class MemTransformerLM(nn.Module):
                 core_out = layer(core_out, pos_emb, self.r_w_bias,
                         self.r_r_bias, dec_attn_mask=dec_attn_mask, mems=mems_i)
                 hids.append(core_out)
+
         elif self.attn_type == 1: # learnable
-            core_out = self.drop(word_emb)
+            # Change 4
+            core_out = self.locked_drop_i(word_emb)
             hids.append(core_out)
             for i, layer in enumerate(self.layers):
                 if self.clamp_len > 0:
@@ -697,7 +762,9 @@ class MemTransformerLM(nn.Module):
                 pos_seq.clamp_(max=self.clamp_len)
             pos_emb = self.pos_emb(pos_seq)
 
-            core_out = self.drop(word_emb + pos_emb[-qlen:])
+            # Change 4
+            core_out = self.locked_drop_i(word_emb)
+            pos_emb = self.locked_drop_i(pos_emb)
 
             hids.append(core_out)
             for i, layer in enumerate(self.layers):
@@ -708,7 +775,9 @@ class MemTransformerLM(nn.Module):
                                  mems=mems_i)
                 hids.append(core_out)
         elif self.attn_type == 3:
-            core_out = self.drop(word_emb)
+            # Change 4
+            #core_out = self.drop(word_emb)
+            core_out = self.locked_drop_i(word_emb)
 
             hids.append(core_out)
             for i, layer in enumerate(self.layers):
@@ -728,6 +797,7 @@ class MemTransformerLM(nn.Module):
                                  mems=mems_i)
                 hids.append(core_out)
 
+        # Change 6
         core_out = self.drop(core_out)
 
         new_mems = self._update_mems(hids, mems, mlen, qlen)
@@ -745,6 +815,8 @@ class MemTransformerLM(nn.Module):
         hidden, new_mems = self._forward(data, mems=mems)
 
         pred_hid = hidden[-tgt_len:]
+        # Change 8
+        pred_hid = self.locked_drop_o(pred_hid)
         if self.sample_softmax > 0 and self.training:
             assert self.tie_weight
             logit = sample_logits(self.word_emb,

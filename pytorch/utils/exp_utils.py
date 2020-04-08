@@ -8,7 +8,7 @@ import torch
 
 def logging(s, log_path, print_=True, log_=True):
     if print_:
-        print(s)
+        print(s, flush=True)
     if log_:
         with open(log_path, 'a+') as f_log:
             f_log.write(s + '\n')
