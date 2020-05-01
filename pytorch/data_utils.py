@@ -180,7 +180,7 @@ class Corpus(object):
         self.dataset = dataset
         self.vocab = Vocab(*args, **kwargs)
 
-        if self.dataset in ['ptb', 'wt2', 'enwik8', 'text8', 'py_snoops']:
+        if self.dataset in ['ptb', 'wt2', 'enwik8', 'text8']:
             self.vocab.count_file(os.path.join(path, 'train.txt'))
             self.vocab.count_file(os.path.join(path, 'valid.txt'))
             self.vocab.count_file(os.path.join(path, 'test.txt'))
