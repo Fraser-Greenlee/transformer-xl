@@ -1,4 +1,5 @@
 import os
+from io import StringIO
 from collections import Counter, OrderedDict
 
 import torch
@@ -20,13 +21,15 @@ class Vocab(object):
         if self.lower_case:
             line = line.lower()
 
+        '''
         # empty delimiter '' will evaluate False
         if self.delimiter == '':
             symbols = line
         else:
             symbols = line.split(self.delimiter)
+        '''
 
-        import pdb; pdb.set_trace()
+        symbols = [i.string for i in tokenize.generate_tokens( StringIO(line).readline )]
 
         if add_double_eos: # lm1b
             return ['<S>'] + symbols + ['<S>']

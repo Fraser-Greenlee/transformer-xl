@@ -270,7 +270,6 @@ def get_lm_corpus(datadir, dataset):
         elif dataset == 'py_snoops':
             kwargs['special'] = []
             kwargs['lower_case'] = False
-            kwargs['max_size'] = 267_735
 
         corpus = Corpus(datadir, dataset, **kwargs)
         torch.save(corpus, fn)
