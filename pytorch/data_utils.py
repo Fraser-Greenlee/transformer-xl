@@ -242,7 +242,7 @@ def get_lm_corpus(datadir, dataset):
     else:
         print('Producing dataset {}...'.format(dataset))
         kwargs = {}
-        if dataset in ['wt103', 'wt2', 'py_snoops']:
+        if dataset in ['wt103', 'wt2']:
             kwargs['special'] = ['<eos>']
             kwargs['lower_case'] = False
         elif dataset == 'ptb':
@@ -254,6 +254,9 @@ def get_lm_corpus(datadir, dataset):
             kwargs['vocab_file'] = os.path.join(datadir, '1b_word_vocab.txt')
         elif dataset in ['enwik8', 'text8']:
             pass
+        elif dataset == 'py_snoops':
+            kwargs['special'] = []
+            kwargs['lower_case'] = False
 
         corpus = Corpus(datadir, dataset, **kwargs)
         torch.save(corpus, fn)
