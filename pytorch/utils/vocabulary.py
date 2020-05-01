@@ -26,6 +26,8 @@ class Vocab(object):
         else:
             symbols = line.split(self.delimiter)
 
+        import pdb; pdb.set_trace()
+
         if add_double_eos: # lm1b
             return ['<S>'] + symbols + ['<S>']
         elif add_eos:
@@ -74,8 +76,7 @@ class Vocab(object):
             self._build_from_file(self.vocab_file)
             print('final vocab size {}'.format(len(self)))
         else:
-            print('building vocab with min_freq={}, max_size={}'.format(
-                self.min_freq, self.max_size))
+            print('building vocab with min_freq={}, max_size={}'.format(self.min_freq, self.max_size))
             self.idx2sym = []
             self.sym2idx = OrderedDict()
 
@@ -83,11 +84,11 @@ class Vocab(object):
                 self.add_special(sym)
 
             for sym, cnt in self.counter.most_common(self.max_size):
-                if cnt < self.min_freq: break
+                if cnt < self.min_freq:
+                    break
                 self.add_symbol(sym)
 
-            print('final vocab size {} from {} unique tokens'.format(
-                len(self), len(self.counter)))
+            print('final vocab size {} from {} unique tokens'.format(len(self), len(self.counter)))
 
     def encode_file(self, path, ordered=False, verbose=False, add_eos=True,
             add_double_eos=False):
