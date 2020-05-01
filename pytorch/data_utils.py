@@ -224,8 +224,10 @@ class Corpus(object):
                 os.path.join(path, 'test.txt'), ordered=False, add_double_eos=True)
         elif self.dataset == 'py_snoops':
             self.train = train_paths
+            print('start encoding valid/test')
             self.valid = self.vocab.encode_file(os.path.join(path, 'valid.txt'), ordered=True, add_eos=False)
             self.test  = self.vocab.encode_file(os.path.join(path, 'test.txt' ), ordered=True, add_eos=False)
+            print('finished encoding valid/test')
 
     def get_iterator(self, split, *args, **kwargs):
         # TODO may need to change this to use multiple files
