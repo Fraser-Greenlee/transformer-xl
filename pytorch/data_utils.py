@@ -193,10 +193,12 @@ class Corpus(object):
             train_paths = glob.glob(train_path_pattern)
             # the vocab will load from file when build_vocab() is called
         elif self.dataset == 'py_snoops':
+            self.vocab.count_file(os.path.join(path, 'snoops_large_train_q1.txt'))
+            self.vocab.count_file(os.path.join(path, 'valid.txt'))
+            self.vocab.count_file(os.path.join(path, 'test.txt'))
             train_path_pattern = os.path.join(
                 path, 'snoops_large_train_q*.txt')
             train_paths = glob.glob(train_path_pattern)
-            # the vocab will load from file when build_vocab() is called
 
         self.vocab.build_vocab()
 
