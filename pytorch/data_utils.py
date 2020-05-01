@@ -224,8 +224,8 @@ class Corpus(object):
                 os.path.join(path, 'test.txt'), ordered=False, add_double_eos=True)
         elif self.dataset == 'py_snoops':
             self.train = train_paths
-            self.valid = self.vocab.encode_file(os.path.join(path, 'valid.txt'), ordered=True)
-            self.test  = self.vocab.encode_file(os.path.join(path, 'test.txt' ), ordered=True)
+            self.valid = self.vocab.encode_file(os.path.join(path, 'valid.txt'), ordered=True, add_eos=False)
+            self.test  = self.vocab.encode_file(os.path.join(path, 'test.txt' ), ordered=True, add_eos=False)
 
     def get_iterator(self, split, *args, **kwargs):
         # TODO may need to change this to use multiple files
@@ -268,6 +268,7 @@ def get_lm_corpus(datadir, dataset):
         elif dataset == 'py_snoops':
             kwargs['special'] = []
             kwargs['lower_case'] = False
+            kwargs['max_size'] = 267_735
 
         corpus = Corpus(datadir, dataset, **kwargs)
         torch.save(corpus, fn)
