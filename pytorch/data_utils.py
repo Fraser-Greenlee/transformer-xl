@@ -192,10 +192,15 @@ class Corpus(object):
                 'training-monolingual.tokenized.shuffled', 'news.en-*')
             train_paths = glob.glob(train_path_pattern)
             # the vocab will load from file when build_vocab() is called
+        elif self.dataset == 'py_snoops':
+            train_path_pattern = os.path.join(
+                path, 'snoops_large_train_q*.txt')
+            train_paths = glob.glob(train_path_pattern)
+            # the vocab will load from file when build_vocab() is called
 
         self.vocab.build_vocab()
 
-        if self.dataset in ['ptb', 'wt2', 'wt103', 'py_snoops']:
+        if self.dataset in ['ptb', 'wt2', 'wt103']:
             self.train = self.vocab.encode_file(
                 os.path.join(path, 'train.txt'), ordered=True)
             self.valid = self.vocab.encode_file(
@@ -215,13 +220,17 @@ class Corpus(object):
                 os.path.join(path, 'valid.txt'), ordered=False, add_double_eos=True)
             self.test  = self.vocab.encode_file(
                 os.path.join(path, 'test.txt'), ordered=False, add_double_eos=True)
+        elif self.dataset == 'py_snoops':
+            self.train = train_paths
+            self.valid = self.vocab.encode_file(os.path.join(path, 'valid.txt'), ordered=True)
+            self.test  = self.vocab.encode_file(os.path.join(path, 'test.txt' ), ordered=True)
 
     def get_iterator(self, split, *args, **kwargs):
         # TODO may need to change this to use multiple files
         if split == 'train':
-            if self.dataset in ['ptb', 'wt2', 'wt103', 'enwik8', 'text8', 'py_snoops']:
+            if self.dataset in ['ptb', 'wt2', 'wt103', 'enwik8', 'text8']:
                 data_iter = LMOrderedIterator(self.train, *args, **kwargs)
-            elif self.dataset == 'lm1b':
+            elif self.dataset in ['lm1b', 'py_snoops']:
                 kwargs['shuffle'] = True
                 data_iter = LMMultiFileIterator(self.train, self.vocab, *args, **kwargs)
         elif split in ['valid', 'test']:

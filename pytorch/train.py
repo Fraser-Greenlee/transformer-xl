@@ -184,6 +184,7 @@ device = torch.device('cuda' if args.cuda else 'cpu')
 corpus = get_lm_corpus(args.data, args.dataset)
 ntokens = len(corpus.vocab)
 args.n_token = ntokens
+print('Vocab size : {}'.format(len(corpus.vocab.idx2sym)))
 
 eval_batch_size = 10
 tr_iter = corpus.get_iterator('train', args.batch_size, args.tgt_len,
@@ -196,11 +197,11 @@ te_iter = corpus.get_iterator('test', eval_batch_size, args.eval_tgt_len,
 # adaptive softmax / embedding
 cutoffs, tie_projs = [], [False]
 if args.adaptive:
-    assert args.dataset in ['wt103', 'lm1b']
+    assert args.dataset in ['wt103', 'lm1b', 'py_snoops']
     if args.dataset == 'wt103':
         cutoffs = [20000, 40000, 200000]
         tie_projs += [True] * len(cutoffs)
-    elif args.dataset == 'lm1b':
+    elif args.dataset in ['lm1b', 'py_snoops']:
         cutoffs = [60000, 100000, 640000]
         tie_projs += [False] * len(cutoffs)
 
